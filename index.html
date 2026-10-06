@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0b0b0d">
+<title>Peak Pro V2 — Phase 1</title>
+<style>
+:root{font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display",sans-serif;color:#f5f5f7;background:#0b0b0d}
+*{box-sizing:border-box} body{margin:0;padding:env(safe-area-inset-top) 18px env(safe-area-inset-bottom);min-height:100vh}
+.wrap{max-width:560px;margin:0 auto;padding:28px 0 40px}
+h1{font-size:30px;margin:0 0 6px}.sub{color:#98989f;margin-bottom:24px}
+.card{background:#17171b;border:1px solid #29292f;border-radius:18px;padding:18px;margin:12px 0}
+button{width:100%;border:0;border-radius:14px;padding:15px;font-size:17px;font-weight:700;margin-top:10px;background:#f5f5f7;color:#111}
+button.secondary{background:#29292f;color:#fff}button:disabled{opacity:.45}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.stat{background:#101014;border-radius:14px;padding:14px}.label{font-size:12px;color:#8e8e93;text-transform:uppercase;letter-spacing:.08em}.value{font-size:22px;margin-top:5px}
+#log{font:12px ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;word-break:break-word;color:#b9b9c2;max-height:260px;overflow:auto}
+.ok{color:#62d98b}.warn{color:#ffd166}.bad{color:#ff6b6b}
+.small{font-size:13px;color:#8e8e93;line-height:1.45}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Peak Pro V2</h1>
+  <div class="sub">Custom controller • Phase 1 / BLE connection</div>
+
+  <div class="card">
+    <div id="status">Not connected</div>
+    <button id="connect">Connect Peak Pro</button>
+    <button id="disconnect" class="secondary" disabled>Disconnect</button>
+  </div>
+
+  <div class="card">
+    <div class="grid">
+      <div class="stat"><div class="label">Device</div><div class="value" id="deviceName">—</div></div>
+      <div class="stat"><div class="label">Battery</div><div class="value" id="battery">—</div></div>
+      <div class="stat"><div class="label">Heater</div><div class="value" id="heater">—</div></div>
+      <div class="stat"><div class="label">State</div><div class="value" id="state">—</div></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <b>Connection details</b>
+    <p class="small">This build is intentionally read-only. It will not start a heat cycle, change temperature, change LEDs, or modify firmware.</p>
+    <div id="details" class="small">Waiting for connection…</div>
+  </div>
+
+  <div class="card">
+    <b>BLE log</b>
+    <div id="log"></div>
+  </div>
+</div>
+
+<script>
+const BASE = "f9a98c15-c651-4f34-b656-d100bf5800";
+const SERVICE_CANDIDATES = [
+  BASE + "ff",
+  BASE + "00",
+  "180f", "180a"
+];
+
+const OFF = {
+  batterySOC:"20", operatingState:"22", heaterTemp:"25",
+  accessSeedKey:"e0", deviceName:"4d", chamberType:"3f"
+};
+
+let device=null, server=null, service=null, chars={};
+
+const $ = id => document.getElementById(id);
+function log(s){ $("log").textContent += `[${new Date().toLocaleTimeString()}] ${s}\n`; $("log").scrollTop=$("log").scrollHeight; }
+function setStatus(s, cls=""){ $("status").textContent=s; $("status").className=cls; }
+function uuid(off){ return BASE + off.toLowerCase().padStart(2,"0"); }
+function hex(data){ return [...new Uint8Array(data)].map(x=>x.toString(16).padStart(2,"0")).join(" "); }
+
+function decodeFloatLE(data){
+  try { return new DataView(data.buffer,data.byteOffset,data.byteLength).getFloat32(0,true); }
+  catch { return NaN; }
+}
+function decodeU32LE(data){
+  try { return new DataView(data.buffer,data.byteOffset,data.byteLength).getUint32(0,true); }
+  catch { return NaN; }
+}
+
+async function sha256(bytes){
+  const digest=await crypto.subtle.digest("SHA-256",bytes);
+  return new Uint8Array(digest);
+}
+
+async function authenticateIfPossible(ch){
+  // Firmware-X authentication described in the public Peak Pro reverse-engineering writeup.
+  const seed = new Uint8Array(await ch.readValue());
+  if(seed.byteLength < 16){ log("E0 seed was shorter than expected; skipping auth."); return false; }
+
+  const handshake = Uint8Array.from(atob("FUrZc0WilhUBteT2JlCc+A=="), c=>c.charCodeAt(0));
+  const input = new Uint8Array(32);
+  input.set(handshake.slice(0,16),0);
+  input.set(seed.slice(0,16),16);
+  const hash = await sha256(input);
+  await ch.writeValueWithResponse(hash.slice(0,16));
+  log("Authentication handshake written.");
+  return true;
+}
+
+async function findCharacteristic(offset){
+  const wanted=uuid(offset);
+  // Primary custom service path
+  if(service){
+    try { return await service.getCharacteristic(wanted); } catch(e){}
+  }
+  // Search every accessible primary service.
+  const services=await server.getPrimaryServices();
+  for(const s of services){
+    try{
+      const c=await s.getCharacteristic(wanted);
+      service=s;
+      return c;
+    }catch(e){}
+  }
+  return null;
+}
+
+async function connect(){
+  if(!navigator.bluetooth){ alert("This browser does not expose Web Bluetooth. On iPhone, use Bluefy."); return; }
+
+  try{
+    setStatus("Choose your Peak Pro…","warn");
+    log("Opening Bluetooth device picker…");
+
+    device=await navigator.bluetooth.requestDevice({
+      acceptAllDevices:true,
+      optionalServices:SERVICE_CANDIDATES
+    });
+
+    $("deviceName").textContent=device.name || "Unknown";
+    device.addEventListener("gattserverdisconnected", onDisconnected);
+
+    log(`Selected: ${device.name || "(unnamed)"}`);
+    server=await device.gatt.connect();
+    log("GATT connected.");
+
+    const services=await server.getPrimaryServices();
+    log(`Accessible primary services: ${services.length}`);
+    $("details").innerHTML = `GATT connected.<br>Services: ${services.length}`;
+
+    for(const s of services){
+      log(`Service ${s.uuid}`);
+      try{
+        const cs=await s.getCharacteristics();
+        log(`  characteristics: ${cs.length}`);
+      }catch(e){ log(`  characteristic enumeration failed: ${e.message}`); }
+    }
+
+    service=null;
+    // Try the public custom UUID layout first.
+    let e0=await findCharacteristic(OFF.accessSeedKey);
+    if(e0){
+      log("Found accessSeedKey (E0).");
+      try{ await authenticateIfPossible(e0); }catch(e){ log("Authentication failed/skipped: "+e.message); }
+    } else {
+      log("E0 accessSeedKey not exposed to this page.");
+    }
+
+    // Read-only telemetry
+    const battery=await findCharacteristic(OFF.batterySOC);
+    if(battery){
+      const d=new Uint8Array(await battery.readValue());
+      const n=decodeFloatLE(d);
+      const b=Number.isFinite(n) && n<=1000 ? n : decodeU32LE(d);
+      $("battery").textContent = Number.isFinite(b) ? `${Math.round(b)}%` : "read";
+      log(`Battery raw: ${hex(d)}`);
+    }
+
+    const temp=await findCharacteristic(OFF.heaterTemp);
+    if(temp){
+      const d=new Uint8Array(await temp.readValue());
+      const n=decodeFloatLE(d);
+      $("heater").textContent=Number.isFinite(n) ? `${n.toFixed(1)}°C` : "read";
+      log(`Heater temp raw: ${hex(d)}`);
+    }
+
+    const state=await findCharacteristic(OFF.operatingState);
+    if(state){
+      const d=new Uint8Array(await state.readValue());
+      $("state").textContent=hex(d);
+      log(`Operating state raw: ${hex(d)}`);
+    }
+
+    setStatus("Connected","ok");
+    $("connect").disabled=true;
+    $("disconnect").disabled=false;
+    log("Phase 1 connection complete.");
+  }catch(e){
+    setStatus("Connection failed","bad");
+    log(`ERROR: ${e.name}: ${e.message}`);
+    console.error(e);
+  }
+}
+
+function onDisconnected(){
+  setStatus("Disconnected","warn");
+  $("connect").disabled=false;
+  $("disconnect").disabled=true;
+  log("GATT disconnected.");
+}
+function disconnect(){
+  if(device?.gatt?.connected) device.gatt.disconnect();
+}
+
+$("connect").addEventListener("click",connect);
+$("disconnect").addEventListener("click",disconnect);
+log("Ready. Use Bluefy on iPhone.");
+</script>
+</body>
+</html>
