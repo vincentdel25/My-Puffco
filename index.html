@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>Peak Pro · Phase 2A</title>
+<style>
+:root{font-family:system-ui,-apple-system,sans-serif;color:#e8edf4;background:#0c1119;color-scheme:dark}*{box-sizing:border-box}body{margin:0;padding:24px 16px 48px}main{max-width:760px;margin:auto}h1{font-size:30px;margin:8px 0}h2{font-size:19px}p{color:#aab9ca;line-height:1.55}.eyebrow{color:#74dfbf;letter-spacing:2px;font-size:12px;font-weight:700}.panel{background:#151e2b;border:1px solid #2b3a4f;border-radius:16px;padding:18px;margin:18px 0}.row{display:flex;flex-wrap:wrap;gap:10px}button{font:inherit;font-weight:600;border:1px solid #3d526d;border-radius:10px;padding:13px 16px;background:#223148;color:#eff6ff;cursor:pointer}button.primary{background:#74dfbf;color:#08251c;border-color:#74dfbf}button:disabled{opacity:.4;cursor:default}button:focus-visible,textarea:focus-visible{outline:3px solid #74dfbf;outline-offset:3px}#status{color:#74dfbf;font-weight:600}.service{border-top:1px solid #2b3a4f;padding-top:14px;margin-top:14px}.uuid{font-family:ui-monospace,monospace;font-size:13px;overflow-wrap:anywhere}.characteristic{background:#0c1119;border-radius:10px;padding:12px;margin-top:10px}.properties{color:#aab9ca;font-size:13px;line-height:1.6}.value{white-space:pre-wrap;overflow-wrap:anywhere;font-family:ui-monospace,monospace;font-size:13px;color:#74dfbf}textarea{width:100%;min-height:320px;resize:vertical;background:#0c1119;border:1px solid #3d526d;border-radius:10px;padding:12px;color:#d5e2f4;font:12px/1.6 ui-monospace,monospace;margin-top:14px}small{color:#aab9ca}ol{padding-left:22px;color:#aab9ca;line-height:1.65}
+</style>
+</head>
+<body><main>
+<div class="eyebrow">PEAK PRO V2 / BLUETOOTH EXPLORER</div>
+<h1>Phase 2A</h1>
+<p>Inspect the services your browser can access, characteristic permissions, and raw readable values.</p>
+<section class="panel">
+<div id="status" role="status" aria-live="polite">Disconnected</div>
+<p id="device">Open this page in Bluefy on your iPhone.</p>
+<div class="row"><button id="connect" class="primary">Connect Peak Pro</button><button id="disconnect" disabled>Disconnect</button><button id="scan" disabled>Read again</button></div>
+<p><small>This build sends no heat, profile, LED, or authentication commands. It reads characteristics with the read permission and lists the others. It does not subscribe to notifications.</small></p>
+</section>
+<section class="panel"><h2>Services &amp; characteristics</h2><p id="summary">Connect to begin.</p><div id="results"></div></section>
+<section class="panel"><h2>BLE log</h2><p>Copy the whole log and send it back for protocol mapping. Raw values are not yet decoded as temperature or battery.</p><div class="row"><button id="copy">Copy log</button><button id="select">Select log</button><button id="download">Download log</button></div><textarea id="log" aria-label="BLE diagnostic log" readonly spellcheck="false"></textarea><p id="exportStatus" role="status" aria-live="polite"></p></section>
+<details class="panel"><summary>Setup &amp; troubleshooting</summary><ol><li>Replace the old index.html in your existing GitHub repository with this file and commit it.</li><li>Open your existing GitHub Pages website in Bluefy. Confirm the title says Phase 2A. Refresh if it still shows Phase 1.</li><li>Close other Puffco controllers, wake your Peak Pro, and tap Connect Peak Pro. Choose your device.</li><li>Keep Bluefy in the foreground until the scan finishes. Tap Copy log when it says Scan complete.</li></ol><p>The picker shows all nearby devices so a changed device name will not hide your Peak Pro. Choose your own Peak Pro. The app requests the two custom service UUIDs from your screenshots, plus standard battery and device information services. Other services may exist but remain inaccessible to this page.</p><p>If a read requires authentication, its error is logged and the scan continues. A timeout disconnects the device; reconnect to try again. Logs include the Bluetooth device name and raw values, which may contain identifiers. No logs are sent to a server by this page.</p></details>
+</main>
+<script>
+'use strict';
+const VERSION='Phase 2A · 2026-10-07';
+const SERVICES=['420b9b40-457d-4abe-a3bf-71609d79581b','e276967f-ea8a-478a-a92e-d78f5dd15dd5','battery_service','device_information'];
+const FLAGS=['broadcast','read','writeWithoutResponse','write','notify','indicate','authenticatedSignedWrites','reliableWrite','writableAuxiliaries'];
+const $=id=>document.getElementById(id);
+let device=null,server=null,busy=false,generation=0;
+function log(message){$('log').value+='['+new Date().toISOString()+'] '+message+'\n';$('log').scrollTop=$('log').scrollHeight;}
+function err(e){return (e.name||'Error')+': '+(e.message||String(e));}
+function controls(){const connected=!!(server&&server.connected);$('connect').disabled=busy||connected;$('disconnect').disabled=!device||(!connected&&!busy);$('scan').disabled=busy||!connected;}
+function status(message){$('status').textContent=message;controls();}
+function hex(view){return Array.from(new Uint8Array(view.buffer,view.byteOffset,view.byteLength),b=>b.toString(16).padStart(2,'0')).join(' ')||'(empty)';}
+function node(tag,cls,text){const n=document.createElement(tag);n.className=cls;n.textContent=text;return n;}
+function assertActive(token){if(token!==generation||!server||!server.connected)throw new Error('Scan interrupted: device disconnected.');}
+async function operation(action,token){assertActive(token);let timer;try{return await Promise.race([action(),new Promise((_,reject)=>{timer=setTimeout(()=>{reject(new Error('Bluetooth operation timed out after 12 seconds. Reconnect to retry.'));if(device&&device.gatt)device.gatt.disconnect();generation++;},12000);})]);}finally{clearTimeout(timer);}}
+async function scan(){
+ if(busy||!server||!server.connected)return;
+ busy=true;const token=generation;status('Scanning…');$('results').replaceChildren();$('summary').textContent='Reading accessible services…';
+ let total=0,reads=0,failed=0,serviceErrors=0;
+ try{
+  const services=await operation(()=>server.getPrimaryServices(),token);assertActive(token);
+  log('ACCESSIBLE PRIMARY SERVICES: '+services.length+' (permission-scoped; not a complete hardware inventory)');
+  for(const service of services){
+   assertActive(token);log('SERVICE '+service.uuid);
+   const block=node('div','service','');block.append(node('div','uuid','SERVICE '+service.uuid));$('results').append(block);
+   let chars;
+   try{chars=await operation(()=>service.getCharacteristics(),token);assertActive(token);}catch(e){log('  ENUMERATION ERROR '+err(e));block.append(node('p','value',err(e)));serviceErrors++;assertActive(token);continue;}
+   log('  CHARACTERISTICS: '+chars.length);
+   for(const c of chars){
+    assertActive(token);total++;
+    const properties=FLAGS.map(key=>key+'='+((c.properties&&c.properties[key])?'yes':'no')).join(' | ');
+    log('  CHARACTERISTIC '+c.uuid);log('    PROPERTIES '+properties);
+    const card=node('div','characteristic','');card.append(node('div','uuid',c.uuid),node('p','properties',properties));block.append(card);
+    if(c.properties&&c.properties.read){
+     try{const value=await operation(()=>c.readValue(),token);assertActive(token);const raw=hex(value);log('    READ '+value.byteLength+' bytes: '+raw);card.append(node('div','value','READ '+value.byteLength+' bytes: '+raw));reads++;}
+     catch(e){log('    READ ERROR '+err(e));card.append(node('div','value','READ ERROR '+err(e)));failed++;assertActive(token);}
+    }else{log('    VALUE: skipped (read permission absent)');card.append(node('div','value','Value skipped · no read permission'));}
+   }
+  }
+  const summary=services.length+' services · '+total+' characteristics · '+reads+' successful reads · '+failed+' read errors · '+serviceErrors+' enumeration errors';
+  $('summary').textContent=summary;log('SCAN COMPLETE: '+summary);status('Scan complete');
+ }catch(e){log('SCAN STOPPED '+err(e));$('summary').textContent='Scan stopped. Partial results are retained in the log.';status(server&&server.connected?'Scan stopped':'Disconnected');}
+ finally{busy=false;controls();}
+}
+async function connect(){
+ if(busy)return;
+ if(!window.isSecureContext){log('HTTPS required. Open your deployed GitHub Pages URL.');status('HTTPS required');return;}
+ if(!navigator.bluetooth){log('Web Bluetooth unavailable. Open the deployed page in Bluefy.');status('Bluetooth unavailable');return;}
+ busy=true;status('Choose your Peak Pro…');log('Opening picker; optionalServices='+SERVICES.join(', '));
+ try{
+  const selected=await navigator.bluetooth.requestDevice({acceptAllDevices:true,optionalServices:SERVICES});
+  device=selected;generation++;const token=generation;
+  device.addEventListener('gattserverdisconnected',()=>{if(device!==selected)return;generation++;server=null;log('GATT DISCONNECTED');status('Disconnected');});
+  $('device').textContent=device.name||'Unnamed Bluetooth device';log('SELECTED '+(device.name||'(unnamed)'));
+  if(!device.gatt)throw new Error('The selected device has no GATT interface.');
+  // Connection has its own timeout because there is no connected server yet.
+  let timer;
+  try{server=await Promise.race([selected.gatt.connect().then(connected=>{if(token!==generation){selected.gatt.disconnect();throw new Error('Connection interrupted.');}return connected;}),new Promise((_,reject)=>{timer=setTimeout(()=>{generation++;selected.gatt.disconnect();reject(new Error('Connection timed out. Try again.'));},15000);})]);}finally{clearTimeout(timer);}
+  if(token!==generation){device.gatt.disconnect();server=null;throw new Error('Connection interrupted.');}
+  log('GATT CONNECTED');busy=false;await scan();
+ }catch(e){log('CONNECT ERROR '+err(e));status(server&&server.connected?'Connected':'Disconnected');}
+ finally{busy=false;controls();}
+}
+$('connect').addEventListener('click',connect);
+$('scan').addEventListener('click',scan);
+$('disconnect').addEventListener('click',()=>{generation++;if(device&&device.gatt)device.gatt.disconnect();server=null;status('Disconnected');});
+$('select').addEventListener('click',()=>{$('log').focus();$('log').select();$('log').setSelectionRange(0,$('log').value.length);$('exportStatus').textContent='Log selected. Touch and hold the text, then choose Copy.';});
+$('copy').addEventListener('click',async()=>{try{await navigator.clipboard.writeText($('log').value);$('exportStatus').textContent='Log copied.';}catch(e){$('log').focus();$('log').select();$('log').setSelectionRange(0,$('log').value.length);$('exportStatus').textContent='Use Copy from the selected text, or tap Download log.';}});
+$('download').addEventListener('click',()=>{const url=URL.createObjectURL(new Blob([$('log').value],{type:'text/plain;charset=utf-8'}));const a=document.createElement('a');a.href=url;a.download='peak-pro-phase2a-log.txt';document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);$('exportStatus').textContent='If no download appears in Bluefy, use Copy log or Select log.';});
+log(VERSION);log('READY. Discovery and characteristic reads only; no command writes or notification subscriptions.');log('Secure context: '+window.isSecureContext+'; Web Bluetooth: '+!!navigator.bluetooth);controls();
+</script>
+</body>
+</html>
