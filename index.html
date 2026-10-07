@@ -4,14 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark">
-<title>Peak Pro · Phase 2B</title>
+<title>Peak Pro · Phase 2B.1</title>
 <style>
 :root{font-family:system-ui,-apple-system,sans-serif;color:#e8edf4;background:#0c1119;color-scheme:dark}*{box-sizing:border-box}body{margin:0;padding:24px 16px 48px}main{max-width:760px;margin:auto}h1{font-size:30px;margin:8px 0}h2{font-size:19px}p{color:#aab9ca;line-height:1.55}.eyebrow{color:#74dfbf;letter-spacing:2px;font-size:12px;font-weight:700}.panel{background:#151e2b;border:1px solid #2b3a4f;border-radius:16px;padding:18px;margin:18px 0}.row{display:flex;flex-wrap:wrap;gap:10px}button{font:inherit;font-weight:600;border:1px solid #3d526d;border-radius:10px;padding:13px 16px;background:#223148;color:#eff6ff;cursor:pointer}button.primary{background:#74dfbf;color:#08251c;border-color:#74dfbf}button:disabled{opacity:.4;cursor:default}button:focus-visible,textarea:focus-visible{outline:3px solid #74dfbf;outline-offset:3px}#status{color:#74dfbf;font-weight:600}.service{border-top:1px solid #2b3a4f;padding-top:14px;margin-top:14px}.uuid{font-family:ui-monospace,monospace;font-size:13px;overflow-wrap:anywhere}.characteristic{background:#0c1119;border-radius:10px;padding:12px;margin-top:10px}.properties{color:#aab9ca;font-size:13px;line-height:1.6}.value{white-space:pre-wrap;overflow-wrap:anywhere;font-family:ui-monospace,monospace;font-size:13px;color:#74dfbf}textarea{width:100%;min-height:320px;resize:vertical;background:#0c1119;border:1px solid #3d526d;border-radius:10px;padding:12px;color:#d5e2f4;font:12px/1.6 ui-monospace,monospace;margin-top:14px}small{color:#aab9ca}ol{padding-left:22px;color:#aab9ca;line-height:1.65}
 </style>
 </head>
 <body><main>
 <div class="eyebrow">PEAK PRO V2 / LIVE STATUS</div>
-<h1>Phase 2B</h1>
+<h1>Phase 2B.1</h1>
 <p>Read battery, chamber temperature, and operating state through the Lorax protocol.</p>
 <section class="panel">
 <div id="status" role="status" aria-live="polite">Disconnected</div>
@@ -20,28 +20,60 @@
 <p><small>This build authenticates and requests status through Bluetooth. It sends no heating, profile, LED, or firmware-update commands.</small></p>
 </section>
 <section class="panel"><h2>Live status</h2><p id="summary">Connect to begin.</p><div class="row"><div class="characteristic"><small>Battery</small><h2 id="battery">—</h2></div><div class="characteristic"><small>Chamber temperature</small><h2 id="temperature">—</h2></div><div class="characteristic"><small>Device state</small><h2 id="state">—</h2></div></div><p id="updated">No readings yet.</p><label><input type="checkbox" id="auto"> Update every 5 seconds</label><p><small>Readings use the published Lorax mapping. Compare the first readings with the official app. Disconnects mark the last values stale.</small></p><div id="results"></div></section><section class="panel"><h2>BLE log</h2><p>Copy the whole log and send it back for protocol mapping. The log includes raw replies and decoded readings. Authentication challenge and token contents are omitted.</p><div class="row"><button id="copy">Copy log</button><button id="select">Select log</button><button id="download">Download log</button></div><textarea id="log" aria-label="BLE diagnostic log" readonly spellcheck="false"></textarea><p id="exportStatus" role="status" aria-live="polite"></p></section>
-<details class="panel"><summary>Setup &amp; troubleshooting</summary><ol><li>Replace the old index.html in your existing GitHub repository with this file and commit it.</li><li>Open your existing GitHub Pages website in Bluefy. Confirm the title says Phase 2B. Refresh if it still shows Phase 1.</li><li>Close other Puffco controllers, wake your Peak Pro, and tap Connect Peak Pro. Choose your device.</li><li>Keep Bluefy in the foreground until status appears. Tap Copy log after the first status refresh.</li></ol><p>The picker shows all nearby devices so a changed device name will not hide your Peak Pro. Choose your own Peak Pro. This version requests the Lorax service identified in your log. It subscribes to replies and events, reads the protocol limits, authenticates, and requests three status paths.</p><p>A failed handshake stops status requests. A transport timeout disconnects the device; reconnect to retry. Logs include the Bluetooth device name and raw values, which may contain identifiers. No logs are sent to a server by this page.</p><p>Protocol reference: <a href="https://github.com/meekzyr/PuffcoPC" target="_blank" rel="noopener">PuffcoPC</a>, commit b8ebc2499ab3f3407822077fd47c16ff57392771. This is an independent JavaScript implementation of its documented packet layout.</p></details>
+<details class="panel"><summary>Setup &amp; troubleshooting</summary><ol><li>Replace the old index.html in your existing GitHub repository with this file and commit it.</li><li>Open your existing GitHub Pages website in Bluefy. Confirm the title says Phase 2B.1. Refresh if it still shows Phase 1.</li><li>Close other Puffco controllers, wake your Peak Pro, and tap Connect Peak Pro. Choose your device.</li><li>Keep Bluefy in the foreground until status appears. Tap Copy log after the first status refresh.</li></ol><p>The picker shows all nearby devices so a changed device name will not hide your Peak Pro. Choose your own Peak Pro. This version requests the Lorax service identified in your log. It subscribes to replies and events, reads the protocol limits, authenticates, and requests three status paths.</p><p>A failed handshake stops status requests. A transport timeout disconnects the device; reconnect to retry. Logs include the Bluetooth device name and raw values, which may contain identifiers. No logs are sent to a server by this page.</p><p>Protocol reference: <a href="https://github.com/meekzyr/PuffcoPC" target="_blank" rel="noopener">PuffcoPC</a>, commit b8ebc2499ab3f3407822077fd47c16ff57392771. This is an independent JavaScript implementation of its documented packet layout.</p></details>
 </main>
 <script>
+// Keep this bootstrap compatible with older WebKit so parse errors remain visible.
+(function () {
+  var area = document.getElementById('log');
+  var startup = document.getElementById('status');
+  window.controllerStarted = false;
+  function report(message) {
+    area.value += '[STARTUP] ' + message + '\n';
+    startup.textContent = 'Startup error · see BLE log';
+  }
+  area.value = '[STARTUP] Phase 2B.1 page loaded. Starting controller…\n';
+  window.addEventListener('error', function (event) {
+    report((event.message || 'JavaScript error') + ' (line ' + (event.lineno || '?') + ')');
+  });
+  window.addEventListener('unhandledrejection', function (event) {
+    var reason = event.reason;
+    report(reason && reason.message ? reason.message : String(reason));
+  });
+  document.getElementById('connect').addEventListener('click', function () {
+    if (!window.controllerStarted) report('Controller did not initialize. Copy or screenshot this log.');
+  });
+  document.getElementById('select').addEventListener('click', function () {
+    if (!window.controllerStarted) { area.focus(); area.select(); area.setSelectionRange(0, area.value.length); }
+  });
+  document.getElementById('copy').addEventListener('click', function () {
+    if (!window.controllerStarted) {
+      area.focus(); area.select(); area.setSelectionRange(0, area.value.length);
+      document.getElementById('exportStatus').textContent = 'Touch and hold the selected log, then choose Copy.';
+    }
+  });
+}());
+</script>
+<script>
 'use strict';
-const VERSION='Phase 2B · Lorax telemetry · 2026-10-07';
+const VERSION='Phase 2B.1 · Bluefy compatibility fix · Lorax telemetry · 2026-10-07';
 const UUID={service:'e276967f-ea8a-478a-a92e-d78f5dd15dd5',version:'05434bca-cc7f-4ef6-bbb3-b1c520b9800c',command:'60133d5c-5727-4f2c-9697-d842c5292a3c',reply:'8dc5ec05-8f7d-45ad-99db-3fbde65dbd9c',event:'43312cd1-7d34-46ce-a7d3-0a98fd9b4cb8'};
 const PATHS={battery:'/p/bat/soc',temperature:'/p/app/htr/temp',state:'/p/app/stat/id'};
 const STATES=['Initializing memory','Version display','Battery display','Powered off','Sleeping','Idle','Selecting temperature','Preheating','Heating','Session ending','Version display','Battery display','Factory test','Pairing'];
 const $=id=>document.getElementById(id);
-const pending=new Map();let device=null,server=null,command=null,reply=null,eventChar=null,authenticated=false,busy=false,generation=0,sequence=0,maxPayload=0,pollTimer=null,lines=[];
+const pending=new Map();let device=null,server=null,command=null,reply=null,eventChar=null,authenticated=false,busy=false,generation=0,sequence=0,maxPayload=0,pollTimer=null,lines=$('log').value.trim().split('\n');
 function log(message){lines.push('['+new Date().toISOString()+'] '+message);if(lines.length>500)lines.shift();$('log').value=lines.join('\n')+'\n';$('log').scrollTop=$('log').scrollHeight;}
 function err(e){return (e.name||'Error')+': '+(e.message||String(e));}
 function raw(bytes){return Array.from(bytes,b=>b.toString(16).padStart(2,'0')).join(' ')||'(empty)';}
 function bytes(view){return new Uint8Array(view.buffer,view.byteOffset,view.byteLength).slice();}
-function controls(){const connected=!!server?.connected;$('connect').disabled=busy||connected;$('disconnect').disabled=!connected;$('scan').disabled=busy||!connected||!authenticated;}
+function controls(){const connected=!!(server && server.connected);$('connect').disabled=busy||connected;$('disconnect').disabled=!connected;$('scan').disabled=busy||!connected||!authenticated;}
 function status(text){$('status').textContent=text;controls();}
 function clearPoll(){clearTimeout(pollTimer);pollTimer=null;}
-function schedule(){clearPoll();if($('auto').checked&&authenticated&&server?.connected)pollTimer=setTimeout(refresh,5000);}
+function schedule(){clearPoll();if($('auto').checked&&authenticated&&(server && server.connected))pollTimer=setTimeout(refresh,5000);}
 function clearValues(){for(const id of ['battery','temperature','state'])$(id).textContent='—';$('updated').textContent='No readings yet.';}
 function cleanup(reason){generation++;clearPoll();authenticated=false;for(const tx of pending.values())tx.reject(new Error(reason));pending.clear();if(reply)reply.removeEventListener('characteristicvaluechanged',onReply);if(eventChar)eventChar.removeEventListener('characteristicvaluechanged',onEvent);reply=null;eventChar=null;command=null;server=null;$('updated').textContent='Disconnected · displayed readings are stale.';status('Disconnected');}
-function disconnect(reason='Disconnected by user'){const old=device;cleanup(reason);if(old?.gatt?.connected)old.gatt.disconnect();}
-function active(token){if(token!==generation||!server?.connected)throw new Error('Connection interrupted.');}
+function disconnect(reason='Disconnected by user'){const old=device;cleanup(reason);if((old && old.gatt && old.gatt.connected))old.gatt.disconnect();}
+function active(token){if(token!==generation||!(server && server.connected))throw new Error('Connection interrupted.');}
 async function bounded(action,token,label){let timer;try{return await Promise.race([action(),new Promise((_,reject)=>{timer=setTimeout(()=>{reject(new Error(label+' timed out. Reconnect to retry.'));disconnect(label+' timed out');},10000);})]);}finally{clearTimeout(timer);if(token!==generation)controls();}}
 // Lorax packet: uint16 little-endian sequence, uint8 opcode, payload.
 function packet(seq,op,payload){const out=new Uint8Array(3+payload.length);new DataView(out.buffer).setUint16(0,seq,true);out[2]=op;out.set(payload,3);return out;}
@@ -49,7 +81,7 @@ function onReply(e){const b=bytes(e.target.value);if(b.length<3){log('Malformed 
 function onEvent(e){log('EVENT '+raw(bytes(e.target.value)));}
 async function request(op,payload=new Uint8Array(),label='',secret=false){
  if(![0,1,2,16].includes(op))throw new Error('Opcode blocked by this telemetry build.');
- if(!server?.connected||!command)throw new Error('Not connected.');
+ if(!(server && server.connected)||!command)throw new Error('Not connected.');
  sequence=(sequence+1)%65535;const seq=sequence,cmd=command,token=generation;
  let resolve,reject,timer;const response=new Promise((a,b)=>{resolve=a;reject=b;});
  pending.set(seq,{resolve,reject,label,secret});
@@ -78,17 +110,17 @@ async function authenticate(token){
  await request(1,digest.slice(0,16),'UNLOCK_ACCESS',true);active(token);authenticated=true;log('AUTHENTICATION ACCEPTED');
 }
 async function refresh(){
- if(busy||!authenticated||!server?.connected)return;
+ if(busy||!authenticated||!(server && server.connected))return;
  clearPoll();busy=true;status('Reading status…');const token=generation;let success=0;
  try{for(const [id,path] of Object.entries(PATHS)){active(token);try{const b=await readPath(path);active(token);const value=decode(id,b);$(id).textContent=value;log('DECODED '+id+': '+value);success++;}catch(e){$(id).textContent='Unavailable';log('READ ERROR '+path+' '+err(e));active(token);}}
  $('summary').textContent=success+'/3 status readings received. Lorax authentication accepted.';$('updated').textContent='Last refresh: '+new Date().toLocaleTimeString();status(success===3?'Live status ready':'Partial status · see log');
- }catch(e){log('REFRESH STOPPED '+err(e));if(server?.connected)status('Read failed');}
+ }catch(e){log('REFRESH STOPPED '+err(e));if((server && server.connected))status('Read failed');}
  finally{busy=false;controls();schedule();}
 }
 async function connect(){
  if(busy)return;
  if(!window.isSecureContext||!navigator.bluetooth){status('Open the HTTPS page in Bluefy');log('Requires secure context and Web Bluetooth.');return;}
- if(!globalThis.crypto?.subtle){status('SHA-256 unavailable in this browser');log('Web Crypto required for authentication.');return;}
+ if(!(window.crypto && window.crypto.subtle)){status('SHA-256 unavailable in this browser');log('Web Crypto required for authentication.');return;}
  busy=true;clearPoll();clearValues();status('Choose your Peak Pro…');$('summary').textContent='Connecting…';
  try{
   const selected=await navigator.bluetooth.requestDevice({acceptAllDevices:true,optionalServices:[UUID.service]});device=selected;generation++;const token=generation;
@@ -108,7 +140,7 @@ function selectLog(){$('log').focus();$('log').select();$('log').setSelectionRan
 $('select').addEventListener('click',()=>{selectLog();$('exportStatus').textContent='Log selected. Touch and hold, then choose Copy.';});
 $('copy').addEventListener('click',async()=>{try{await navigator.clipboard.writeText($('log').value);$('exportStatus').textContent='Log copied.';}catch(e){selectLog();$('exportStatus').textContent='Use Copy from the selected text, or Download log.';}});
 $('download').addEventListener('click',()=>{const url=URL.createObjectURL(new Blob([$('log').value],{type:'text/plain;charset=utf-8'}));const a=document.createElement('a');a.href=url;a.download='peak-pro-phase2b-log.txt';document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);});
-log(VERSION);log('Ready: Lorax limits, authentication, and three telemetry read paths only.');log('Protocol reference: meekzyr/PuffcoPC commit b8ebc2499ab3f3407822077fd47c16ff57392771');controls();
+window.controllerStarted=true;log(VERSION);log('Web Bluetooth: '+!!navigator.bluetooth+'; secure context: '+window.isSecureContext+'; SHA-256: '+!!(window.crypto && window.crypto.subtle));log('Ready: Lorax limits, authentication, and three telemetry read paths only.');log('Protocol reference: meekzyr/PuffcoPC commit b8ebc2499ab3f3407822077fd47c16ff57392771');controls();
 </script>
 </body>
 </html>
